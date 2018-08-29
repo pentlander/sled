@@ -110,7 +110,7 @@ impl Tree {
             let root = Frag::Base(
                 Node {
                     id: root_id,
-                    data: Data::Index(root_index_vec),
+                    data: Data::index(root_index_vec),
                     next: None,
                     lo: Bound::Inclusive(vec![]),
                     hi: Bound::Inf,
@@ -185,14 +185,16 @@ impl Tree {
         // cap fails it doesn't mean our value was changed.
         let guard = pin();
         loop {
-            let (mut path, cur) = self.get_internal(&*key, &guard)
+            let (mut path, cur) = self
+                .get_internal(&*key, &guard)
                 .map_err(|e| e.danger_cast())?;
 
             if old != cur {
                 return Err(Error::CasFailed(cur));
             }
 
-            let &mut (ref node, ref cas_key) = path.last_mut()
+            let &mut (ref node, ref cas_key) = path
+                .last_mut()
                 .expect(
                 "get_internal somehow returned a path of length zero",
             );
@@ -550,12 +552,14 @@ impl Tree {
             if let Ok(parent_split) =
                 self.child_split(&root_node, root_cas_key, guard)
             {
-                return self.root_hoist(
-                    root_node.id,
-                    parent_split.to,
-                    parent_split.at.inner().to_vec(),
-                    guard,
-                ).map(|_| ())
+                return self
+                    .root_hoist(
+                        root_node.id,
+                        parent_split.to,
+                        parent_split.at.inner().to_vec(),
+                        guard,
+                    )
+                    .map(|_| ())
                     .map_err(|e| e.danger_cast());
             }
         }
@@ -653,7 +657,7 @@ impl Tree {
         let new_root = Frag::Base(
             Node {
                 id: new_root_pid,
-                data: Data::Index(new_root_vec),
+                data: Data::index(new_root_vec),
                 next: None,
                 lo: Bound::Inclusive(vec![]),
                 hi: Bound::Inf,
@@ -699,7 +703,8 @@ impl Tree {
         let ret = path.last().and_then(
             |&(ref last_node, ref _last_cas_key)| {
                 let data = &last_node.data;
-                let items = data.leaf_ref()
+                let items = data
+                    .leaf_ref()
                     .expect("last_node should be a leaf");
                 let encoded_key =
                     prefix_encode(last_node.lo.inner(), key);
@@ -733,7 +738,6 @@ impl Tree {
         ret
     }
 
-
     /// returns the traversal path, completing any observed
     /// partially complete splits or merges along the way.
     fn path_for_key<'g>(
@@ -750,7 +754,8 @@ impl Tree {
 
         let mut not_found_loops = 0;
         loop {
-            let get_cursor = self.pages
+            let get_cursor = self
+                .pages
                 .get(cursor, guard)
                 .map_err(|e| e.danger_cast())?;
             if get_cursor.is_free() || get_cursor.is_allocated() {
@@ -819,36 +824,45 @@ impl Tree {
             let prefix = node.lo.inner().to_vec();
             path.push((node, cas_key));
 
-            let (node, _) = path.last()
+            let (node, _) = path
+                .last()
                 .expect("we just pushed to path, so it's not empty");
             match node.data {
                 Data::Index(ref ptrs) => {
-                    if let Some(page_id) = Tree::find_key(key, &prefix, ptrs) {
+                    if let Some(page_id) =
+                        Tree::find_key(key, &prefix, ptrs)
+                    {
                         cursor = page_id;
                     } else {
                         panic!("stuck in page traversal loop");
                     }
                 }
-                Data::Leaf(_) => break
+                Data::Leaf(_) => break,
             }
         }
 
         Ok(path)
     }
 
-    fn find_key(key: KeyRef, prefix: KeyRef, ptrs: &Vec<(Key, PageID)>) -> Option<PageID> {
+    fn find_key(
+        key: KeyRef,
+        prefix: KeyRef,
+        ptrs: &Pointers<PageID>,
+    ) -> Option<PageID> {
         let encoded_key = prefix_encode(prefix, key);
-        let search = ptrs.binary_search_by(
-            |(key, _value)| prefix_cmp(key, &encoded_key)
-        );
+        let search = ptrs.search(&encoded_key);
         match search {
             Ok(idx) => {
-                Some(ptrs[idx].1)
-            },
+                Some(ptrs.get(idx).expect("must have found item").1)
+            }
             Err(idx) => {
-                if let Some((ref ptr_key, page_id)) = ptrs.get(idx - 1) {
-                    if prefix_cmp(&ptr_key, &encoded_key) == Ordering::Less {
-                        return Some(*page_id)
+                if let Some((ref ptr_key, page_id)) =
+                    ptrs.get(idx - 1)
+                {
+                    if prefix_cmp(&ptr_key, &encoded_key)
+                        == Ordering::Less
+                    {
+                        return Some(*page_id);
                     }
                 }
                 None
@@ -903,7 +917,7 @@ impl Debug for Tree {
                 match left_node.data {
                     Data::Index(ptrs) => {
                         if let Some(&(ref _sep, ref next_pid)) =
-                            ptrs.first()
+                            ptrs.get(0)
                         {
                             pid = *next_pid;
                             left_most = *next_pid;

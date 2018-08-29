@@ -10,6 +10,10 @@ pub struct Node {
 }
 
 impl Node {
+    fn prefix_decode_key(&self, key: KeyRef) -> Key {
+        prefix_decode(self.lo.inner(), key)
+    }
+
     pub fn apply(
         &mut self,
         frag: &Frag,
@@ -19,7 +23,7 @@ impl Node {
 
         match *frag {
             Set(ref k, ref v) => {
-                let decoded_k = prefix_decode(self.lo.inner(), k);
+                let decoded_k = self.prefix_decode_key(k);
                 if Bound::Inclusive(decoded_k) < self.hi {
                     self.set_leaf(k.clone(), v.clone());
                 } else {
@@ -27,7 +31,7 @@ impl Node {
                 }
             }
             Merge(ref k, ref v) => {
-                let decoded_k = prefix_decode(self.lo.inner(), k);
+                let decoded_k = self.prefix_decode_key(k);
                 if Bound::Inclusive(decoded_k) < self.hi {
                     let merge_fn_ptr = merge_operator
                         .expect("must have a merge operator set");
@@ -51,7 +55,7 @@ impl Node {
                 self.parent_split(parent_split);
             }
             Del(ref k) => {
-                let decoded_k = prefix_decode(self.lo.inner(), k);
+                let decoded_k = self.prefix_decode_key(k);
                 if Bound::Inclusive(decoded_k) < self.hi {
                     self.del_leaf(k);
                 } else {
@@ -89,12 +93,12 @@ impl Node {
         val: Value,
         merge_fn: MergeOperator,
     ) {
+        let decoded_k = self.prefix_decode_key(&key);
         if let Data::Leaf(ref mut records) = self.data {
             let search = records.binary_search_by(
                 |&(ref k, ref _v)| prefix_cmp(k, &*key),
             );
 
-            let decoded_k = prefix_decode(self.lo.inner(), &key);
             if let Ok(idx) = search {
                 let new = merge_fn(
                     &*decoded_k,
@@ -131,8 +135,7 @@ impl Node {
         if let Data::Index(ref mut ptrs) = self.data {
             let encoded_sep =
                 prefix_encode(self.lo.inner(), ps.at.inner());
-            ptrs.push((encoded_sep, ps.to));
-            ptrs.sort_unstable_by(|a, b| prefix_cmp(&*a.0, &*b.0));
+            ptrs.push_and_sort((encoded_sep, ps.to));
         } else {
             panic!("tried to attach a ParentSplit to a Leaf chain");
         }
