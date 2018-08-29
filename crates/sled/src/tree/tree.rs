@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::fmt::{self, Debug};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
@@ -732,11 +733,12 @@ impl Tree {
         ret
     }
 
+
     /// returns the traversal path, completing any observed
     /// partially complete splits or merges along the way.
     fn path_for_key<'g>(
         &self,
-        key: &[u8],
+        key: KeyRef,
         guard: &'g Guard,
     ) -> DbResult<Vec<(Node, TreePtr<'g>)>, ()> {
         let mut cursor = self.root.load(SeqCst);
@@ -817,33 +819,41 @@ impl Tree {
             let prefix = node.lo.inner().to_vec();
             path.push((node, cas_key));
 
-            match path.last()
-                .expect("we just pushed to path, so it's not empty")
-                .0
-                .data
-            {
+            let (node, _) = path.last()
+                .expect("we just pushed to path, so it's not empty");
+            match node.data {
                 Data::Index(ref ptrs) => {
-                    let old_cursor = cursor;
-                    for &(ref sep_k, ref ptr) in ptrs {
-                        let decoded_sep_k =
-                            prefix_decode(&*prefix, sep_k);
-                        if &*decoded_sep_k <= &*key {
-                            cursor = *ptr;
-                        } else {
-                            break; // we've found our next cursor
-                        }
-                    }
-                    if cursor == old_cursor {
+                    if let Some(page_id) = Tree::find_key(key, &prefix, ptrs) {
+                        cursor = page_id;
+                    } else {
                         panic!("stuck in page traversal loop");
                     }
                 }
-                Data::Leaf(_) => {
-                    break;
-                }
+                Data::Leaf(_) => break
             }
         }
 
         Ok(path)
+    }
+
+    fn find_key(key: KeyRef, prefix: KeyRef, ptrs: &Vec<(Key, PageID)>) -> Option<PageID> {
+        let encoded_key = prefix_encode(prefix, key);
+        let search = ptrs.binary_search_by(
+            |(key, _value)| prefix_cmp(key, &encoded_key)
+        );
+        match search {
+            Ok(idx) => {
+                Some(ptrs[idx].1)
+            },
+            Err(idx) => {
+                if let Some((ref ptr_key, page_id)) = ptrs.get(idx - 1) {
+                    if prefix_cmp(&ptr_key, &encoded_key) == Ordering::Less {
+                        return Some(*page_id)
+                    }
+                }
+                None
+            }
+        }
     }
 }
 
